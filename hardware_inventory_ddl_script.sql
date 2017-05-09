@@ -709,20 +709,6 @@ USE `computer_hw_inventory`;
 
 DELIMITER $$
 
-USE `computer_hw_inventory`$$
-DROP TRIGGER IF EXISTS `computer_hw_inventory`.`customer_AFTER_DELETE` $$
-USE `computer_hw_inventory`$$
-CREATE
-DEFINER=`root`@`localhost`
-TRIGGER `computer_hw_inventory`.`customer_AFTER_DELETE`
-AFTER DELETE ON `computer_hw_inventory`.`customer`
-FOR EACH ROW
-BEGIN
-DELETE FROM customerfees
-WHERE CustName=old.CustName;
-
-END$$
-
 
 USE `computer_hw_inventory`$$
 DROP TRIGGER IF EXISTS `computer_hw_inventory`.`customer_AFTER_INSERT` $$
@@ -739,51 +725,6 @@ VALUE (new.CustName);
 END$$
 
 
-USE `computer_hw_inventory`$$
-DROP TRIGGER IF EXISTS `computer_hw_inventory`.`customer_AFTER_UPDATE` $$
-USE `computer_hw_inventory`$$
-CREATE
-DEFINER=`root`@`localhost`
-TRIGGER `computer_hw_inventory`.`customer_AFTER_UPDATE`
-AFTER UPDATE ON `computer_hw_inventory`.`customer`
-FOR EACH ROW
-BEGIN
-UPDATE customerfees
-SET CustName = new.CustName;
-END$$
-
-
-USE `computer_hw_inventory`$$
-DROP TRIGGER IF EXISTS `computer_hw_inventory`.`customerfees_AFTER_INSERT` $$
-USE `computer_hw_inventory`$$
-CREATE
-DEFINER=`root`@`localhost`
-TRIGGER `computer_hw_inventory`.`customerfees_AFTER_INSERT`
-AFTER INSERT ON `computer_hw_inventory`.`customerfees`
-FOR EACH ROW
-BEGIN
-DECLARE owed decimal;
-DECLARE paid decimal;
-
-SELECT `fees_owed`, `fees_paid`
-INTO owed, paid
-FROM `customerfees` JOIN `customer` USING (`CustName`)
-WHERE `CustName`=new.`CustName`;
-
-IF owed > paid THEN
-UPDATE `customer`
-SET `delinquentAcct` = 1
-WHERE `CustName`=new.`CustName`;
-
-else
-UPDATE `customer`
-SET `delinquentAcct` = 0
-WHERE `CustName`=new.`CustName`;
-
-END IF;
-
-
-END$$
 
 
 USE `computer_hw_inventory`$$
