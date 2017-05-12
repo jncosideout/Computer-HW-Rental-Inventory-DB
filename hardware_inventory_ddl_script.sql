@@ -187,7 +187,7 @@ DROP TABLE IF EXISTS `computer_hw_inventory`.`hardware` ;
 CREATE TABLE IF NOT EXISTS `computer_hw_inventory`.`hardware` (
   `idHardware` INT(11) NOT NULL,
   `type` VARCHAR(45) NULL DEFAULT NULL,
-  `condition` INT(11) NULL DEFAULT '3' COMMENT 'Good=0 \nslightly damaged=1.\n  Medium =2\nSevere =3',
+  `condition` INT(11) NULL DEFAULT '0' COMMENT 'Good=0 \nslightly damaged=1.\n  Medium =2\nSevere =3',
   `itemPrice` DECIMAL(7,2) NULL DEFAULT NULL,
   `checkedIN/Out` TINYINT(4) NULL DEFAULT '1' COMMENT 'TRUE=checked in\nFALSE=checked out',
   `rental_ID` INT(11) NULL DEFAULT NULL,
@@ -657,7 +657,7 @@ DROP procedure IF EXISTS `computer_hw_inventory`.`insert into repairServices`;
 
 DELIMITER $$
 USE `computer_hw_inventory`$$
-CREATE DEFINER=`root`@`localhost` PROCEDURE `insert into repairServices`(IN serviceID INT, 
+CREATE DEFINER=`root`@`localhost` PROCEDURE `insert into repairServices`( 
 IN custName CHAR(46), IN vRentalID INT, IN empID INT)
 BEGIN
 DECLARE done INT DEFAULT FALSE;
@@ -665,13 +665,21 @@ DECLARE rentCond integer;
 DECLARE rentRepair decimal;
 DECLARE damageSubtot decimal; 
 DECLARE numDamaged integer;
+DECLARE serviceIDincrmt int;
+
 DECLARE hwcursor cursor for 
 			SELECT h.`condition`, itemRepairCost
             FROM Hardware h JOIN `unit_price` USING (`itemPrice`)
             WHERE  rental_ID = vRentalID;
    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
    
-   
+
+SELECT MAX(`service_orderID`)
+INTO serviceIDincrmt
+FROM `repairservices`;
+
+SET serviceIDincrmt = serviceIDincrmt+1;  
+
    SET damageSubtot = 0;
    
 OPEN hwcursor;
@@ -695,12 +703,47 @@ END LOOP;
 SELECT COUNT(*)
 INTO numDamaged
 FROM Hardware h
-WHERE rental_ID = rentalID 
+WHERE rental_ID = vRentalID 
 AND h.`condition` > 0;
 
 insert into repairServices
-VALUES (serviceID, damageSubtot, numDamaged, 
-custName, rentalID, empID);
+VALUES (serviceIDincrmt, damageSubtot, numDamaged, 
+custName, vRentalID, empID);
+
+END$$
+
+DELIMITER ;
+
+-- -----------------------------------------------------
+-- procedure staff resolves transactions
+-- -----------------------------------------------------
+
+USE `computer_hw_inventory`;
+DROP procedure IF EXISTS `computer_hw_inventory`.`staff resolves transactions`;
+
+DELIMITER $$
+USE `computer_hw_inventory`$$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `staff resolves transactions`(IN rental int,
+ IN returnedOn int)
+BEGIN
+
+UPDATE `computer_hw_inventory`.`transactions`
+SET
+`returnDate` =returnedOn
+WHERE `rental_ID` = rental;
+
+/*reset checkedINOUT to 1 where rental-id*/
+UPDATE `computer_hw_inventory`.`hardware`
+SET 
+`checkedIN/Out` = 1
+WHERE `rental_ID` = rental;
+
+/*show newly resolved transaction 
+show fees owed */
+SET @rental_ID_to_select = rental;
+SELECT transactions.*, `fees_fines`.*
+    FROM transactions JOIN `fees_fines` USING (rental_ID)
+    WHERE transactions.rental_ID = @rental_ID_to_select;
 
 END$$
 
@@ -708,7 +751,6 @@ DELIMITER ;
 USE `computer_hw_inventory`;
 
 DELIMITER $$
-
 
 USE `computer_hw_inventory`$$
 DROP TRIGGER IF EXISTS `computer_hw_inventory`.`customer_AFTER_INSERT` $$
@@ -725,8 +767,6 @@ VALUE (new.CustName);
 END$$
 
 
-
-
 USE `computer_hw_inventory`$$
 DROP TRIGGER IF EXISTS `computer_hw_inventory`.`customerfees_AFTER_UPDATE` $$
 USE `computer_hw_inventory`$$
@@ -736,12 +776,66 @@ TRIGGER `computer_hw_inventory`.`customerfees_AFTER_UPDATE`
 AFTER UPDATE ON `computer_hw_inventory`.`customerfees`
 FOR EACH ROW
 BEGIN
+DECLARE done INT DEFAULT FALSE;
+
 DECLARE owed decimal;
 DECLARE paid decimal;
 
-SELECT `fees_owed`, `fees_paid`
-INTO owed, paid
-FROM `customerfees` JOIN `customer` USING (`CustName`)
+DECLARE foundDmg integer;
+DECLARE dmgCntr integer;
+DECLARE reprCntr integer;
+
+ /* damage cursor*/
+DECLARE dmgCursor cursor for 
+			SELECT `rental_ID`
+            FROM `fees_fines` JOIN `transactions` USING(rental_ID)
+            WHERE  `CustName` = new.`CustName` 
+            AND `damageFine`>0;
+            
+DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+
+SELECT COUNT(*)
+INTO dmgCntr
+ FROM `fees_fines` JOIN `transactions` USING(rental_ID)
+            WHERE  `CustName` = new.`CustName` 
+            AND `damageFine`>0;
+          
+SET reprCntr=0;
+
+/*loop to compare each retal with damages to rentals in
+repairServices table*/
+OPEN dmgCursor; 
+
+dmgloop: LOOP
+
+	FETCH dmgCursor
+		INTO foundDmg;
+IF done THEN
+LEAVE dmgloop;
+
+ END IF;
+
+IF EXISTS(SELECT rental_ID
+		FROM `repairservices`
+		WHERE `CustName`=new.`CustName` AND rental_ID=foundDmg)
+THEN
+SET reprCntr= reprCntr+1;
+END IF;
+
+END LOOP;
+CLOSE dmgCursor;
+
+IF reprCntr=dmgCntr THEN
+
+SELECT SUM(`lateFee`)
+INTO owed
+FROM `fees_fines` JOIN `transactions` USING(rental_ID)
+WHERE `CustName`=new.`CustName`;
+
+SELECT  `fees_paid`
+INTO paid
+FROM `customerfees` /*JOIN `customer` USING (`CustName`)*/
 WHERE `CustName`=new.`CustName`;
 
 IF owed > paid THEN
@@ -756,90 +850,27 @@ WHERE `CustName`=new.`CustName`;
 
 END IF;
 
-END$$
+ELSE 
+
+SELECT `fees_owed`, `fees_paid`
+INTO owed, paid
+FROM `customerfees` /*JOIN `customer` USING (`CustName`)*/
+WHERE `CustName`=new.`CustName`;
 
 
-USE `computer_hw_inventory`$$
-DROP TRIGGER IF EXISTS `computer_hw_inventory`.`transactions_AFTER_INSERT` $$
-USE `computer_hw_inventory`$$
-CREATE
-DEFINER=`root`@`localhost`
-TRIGGER `computer_hw_inventory`.`transactions_AFTER_INSERT`
-AFTER INSERT ON `computer_hw_inventory`.`transactions`
-FOR EACH ROW
-BEGIN
-DECLARE endDays integer;
-   DECLARE endMonths integer;
-   DECLARE startDays integer;
-   DECLARE startMonths integer;
-	DECLARE endYear integer;
-   DECLARE startYear integer;
-   
-DECLARE	latePrice decimal;
-DECLARE renturned integer;
-DECLARE due integer;
+IF owed > paid THEN
+UPDATE `customer`
+SET `delinquentAcct` = 1
+WHERE `CustName`=new.`CustName`;
 
-  /*begin set  lateFee of fees_fines table */
+else
+UPDATE `customer`
+SET `delinquentAcct` = 0
+WHERE `CustName`=new.`CustName`;
 
-   SELECT returnDate
-   INTO renturned
-   FROM Transactions
-   WHERE rental_ID=NEW.rental_ID;
-   
-    SELECT dueDate, totalPrice
-   INTO due, latePrice
-   FROM Transactions
-   WHERE rental_ID=NEW.rental_ID; 
-   
-   SET endYear = (renturned%20000000) DIV 10000; 
-   SET startYear = (due%20000000) DIV 10000;
-   
-   SET endMonths = ((renturned%20000000)%10000) DIV 100 ; /*months since beginning of year*/
-   SET startMonths = ((due%20000000)%10000) DIV 100; /*months since beginning of year*/
-   
-   SET endYear = 365*endYear; /*days since 2000*/
-   SET startYear = 365*startYear;/*days since 2000*/
-   
-   SET endDays = (((renturned%20000000)%10000))%100 ; /*days since beginning of month*/
-   SET startDays = (((due%20000000)%10000))%100 ;/*days since beginning of month*/
-   
-  
-    CASE endMonths
-		WHEN 1 THEN SET endMonths=endDays+endYear;
-		WHEN 2 THEN SET endMonths=31+endDays+endYear;
-		WHEN 3 THEN SET endMonths=59+endDays+endYear;
-		WHEN 4 THEN SET endMonths=90+endDays+endYear;
-        WHEN 5 THEN SET endMonths=120+endDays+endYear;
-        WHEN 6 THEN SET endMonths=151+endDays+endYear;
-        WHEN 7 THEN SET endMonths=181+endDays+endYear;
-        WHEN 8 THEN SET endMonths=212+endDays+endYear;
-        WHEN 9 THEN SET endMonths=243+endDays+endYear;
-        WHEN 10 THEN SET endMonths=273+endDays+endYear;
-        WHEN 11 THEN SET endMonths=304+endDays+endYear;
-        WHEN 12 THEN SET endMonths=334+endDays+endYear;
-	END CASE;
-    
-     CASE startMonths
-		WHEN 1 THEN SET startMonths=startDays+startYear;
-		WHEN 2 THEN SET startMonths=31+startDays+startYear;
-		WHEN 3 THEN SET startMonths=59+startDays+startYear;
-		WHEN 4 THEN SET startMonths=90+startDays+startYear;
-        WHEN 5 THEN SET startMonths=120+startDays+startYear;
-        WHEN 6 THEN SET startMonths=151+startDays+startYear;
-        WHEN 7 THEN SET startMonths=181+startDays+startYear;
-        WHEN 8 THEN SET startMonths=212+startDays+startYear;
-        WHEN 9 THEN SET startMonths=243+startDays+startYear;
-        WHEN 10 THEN SET startMonths=273+startDays+startYear;
-        WHEN 11 THEN SET startMonths=304+startDays+startYear;
-        WHEN 12 THEN SET startMonths=334+startDays+startYear;
-	END CASE;
-  
- 
-   SET latePrice = (endMonths - startMonths)*(0.25*latePrice);
-   
-   INSERT INTO fees_fines
-	(`lateFee`,rental_ID) 
-   VALUES (latePrice,  new.rental_ID);
+END IF;
+END IF;
+
 
 END$$
 
@@ -1180,164 +1211,6 @@ WHERE idOrder = old.idOrder;
 UPDATE `computer_hw_inventory`.`Orders`
 SET totalPrice=totPrice, itemQuantity=numItems
 WHERE idOrder=old.idOrder;
-
-END$$
-
-
-USE `computer_hw_inventory`$$
-DROP TRIGGER IF EXISTS `computer_hw_inventory`.`hardware_AFTER_INSERT` $$
-USE `computer_hw_inventory`$$
-CREATE
-DEFINER=`root`@`localhost`
-TRIGGER `computer_hw_inventory`.`hardware_AFTER_INSERT`
-AFTER INSERT ON `computer_hw_inventory`.`hardware`
-FOR EACH ROW
-BEGIN
-DECLARE done INT DEFAULT FALSE;
-/*variables for calc price of rental transactions and supply orders*/
-DECLARE rentPrice decimal;
-DECLARE rentalPeriod integer;
-DECLARE rentStart integer;
-DECLARE rentEnd integer;
-DECLARE rentSubtot decimal;
- 
-   DECLARE endDays integer;
-   DECLARE endMonths integer;
-   DECLARE startDays integer;
-   DECLARE startMonths integer;
-	DECLARE endYear integer;
-   DECLARE startYear integer;
-/*variables for calc repaircost of service in repairservices table*/
-DECLARE totCost decimal;
-DECLARE numDamaged integer;
-/*variables for calc price and total num or supply orders*/
-DECLARE totPrice decimal;
-DECLARE numItems integer;
-/*variables for calc damage fine of rental transactions*/
-DECLARE rentCond integer;
-DECLARE rentRepair decimal;
-DECLARE damageSubtot decimal;
-
-   /*rentalRate and damage cursor*/
-DECLARE hwcursor cursor for 
-			SELECT `condition`, itemRepairCost, rentalRate
-            FROM Hardware JOIN `unit_price` USING(itemPrice)
-            WHERE  rental_ID = new.rental_ID;
-            
-DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
- 
- 
-   SET rentSubtot = 0;
-      SET damageSubtot = 0;
-            SET totCost =0;
-
-OPEN hwcursor;
-
-read_loop: LOOP
-
-	FETCH hwcursor
-		INTO rentCond, rentRepair, rentPrice;
-IF done THEN
-LEAVE read_loop;
-END IF;
-
-SET rentSubtot = rentSubtot + rentPrice;
-SET damageSubtot = damageSubtot + rentCond*rentRepair + rentCond*50;
-SET totCost = totCost + rentCond*rentRepair;
-END LOOP;
-CLOSE hwcursor;   
-      /*begin set repairservices*/
-   SELECT COUNT(*)
-INTO numDamaged
-FROM Hardware
-WHERE rental_ID = new.rental_ID 
-AND `condition` > 0;
-
-   UPDATE RepairServices
-   SET total_repair_cost = totCost, numDamagedItems = numDamaged
-   WHERE rental_ID = new.rental_ID ; 
-   
-      /*begin set price of rental in transactions table*/ 
-   SELECT rentalDate
-   INTO rentStart
-   FROM Transactions
-   WHERE rental_ID=NEW.rental_ID;
-   
-    SELECT dueDate
-   INTO rentEnd
-   FROM Transactions
-   WHERE rental_ID=NEW.rental_ID; 
-   
-   SET endYear = (rentEnd%20000000) DIV 10000; 
-   SET startYear = (rentStart%20000000) DIV 10000;
-   
-   SET endMonths = ((rentEnd%20000000)%10000) DIV 100 ; /*months since beginning of year*/
-   SET startMonths = ((rentStart%20000000)%10000) DIV 100; /*months since beginning of year*/
-   
-   SET endYear = 365*endYear; /*days since 2000*/
-   SET startYear = 365*startYear;/*days since 2000*/
-   
-   SET endDays = (((rentEnd%20000000)%10000))%100 ; /*days since beginning of month*/
-   SET startDays = (((rentStart%20000000)%10000))%100 ;/*days since beginning of month*/
-   
-  
-    CASE endMonths
-		WHEN 1 THEN SET endMonths=endDays+endYear;
-		WHEN 2 THEN SET endMonths=31+endDays+endYear;
-		WHEN 3 THEN SET endMonths=59+endDays+endYear;
-		WHEN 4 THEN SET endMonths=90+endDays+endYear;
-        WHEN 5 THEN SET endMonths=120+endDays+endYear;
-        WHEN 6 THEN SET endMonths=151+endDays+endYear;
-        WHEN 7 THEN SET endMonths=181+endDays+endYear;
-        WHEN 8 THEN SET endMonths=212+endDays+endYear;
-        WHEN 9 THEN SET endMonths=243+endDays+endYear;
-        WHEN 10 THEN SET endMonths=273+endDays+endYear;
-        WHEN 11 THEN SET endMonths=304+endDays+endYear;
-        WHEN 12 THEN SET endMonths=334+endDays+endYear;
-	END CASE;
-    
-     CASE startMonths
-		WHEN 1 THEN SET startMonths=startDays+startYear;
-		WHEN 2 THEN SET startMonths=31+startDays+startYear;
-		WHEN 3 THEN SET startMonths=59+startDays+startYear;
-		WHEN 4 THEN SET startMonths=90+startDays+startYear;
-        WHEN 5 THEN SET startMonths=120+startDays+startYear;
-        WHEN 6 THEN SET startMonths=151+startDays+startYear;
-        WHEN 7 THEN SET startMonths=181+startDays+startYear;
-        WHEN 8 THEN SET startMonths=212+startDays+startYear;
-        WHEN 9 THEN SET startMonths=243+startDays+startYear;
-        WHEN 10 THEN SET startMonths=273+startDays+startYear;
-        WHEN 11 THEN SET startMonths=304+startDays+startYear;
-        WHEN 12 THEN SET startMonths=334+startDays+startYear;
-	END CASE;
-  
-SET rentalPeriod = endMonths - startMonths;
-   
-   UPDATE Transactions
-   SET totalPrice = rentSubtot*rentalPeriod
-   WHERE rental_ID = new.rental_ID;
-   
-   /*begin set damageFine of rental in transactions table*/ 
-   
-   UPDATE `fees_fines`
-   SET damageFine = damageSubtot
-   WHERE rental_ID = new.rental_ID;
-   
-    /*begin set price of order in order table*/ 
-
-SELECT SUM(itemPrice)
-INTO totPrice
-FROM Hardware
-WHERE idOrder = new.idOrder;
-
-SELECT COUNT(*)
-INTO numItems
-FROM Hardware
-WHERE idOrder = new.idOrder;
-
-UPDATE `computer_hw_inventory`.`Orders`
-SET totalPrice=totPrice, itemQuantity=numItems
-WHERE idOrder=new.idOrder;
 
 END$$
 
