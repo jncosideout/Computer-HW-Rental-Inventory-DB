@@ -1,5 +1,5 @@
 # Computer-HW-Rental-Inventory-DB
-A database designed to facilitate the needs of a company that rents computer hardware to other business.
+A database designed to facilitate the needs of a company that rents computer hardware to other business. [You can read the thesis paper here.](https://docs.google.com/document/d/1-Pl3-byb9lP-yP0djDWQKkJnM8AU3cxsC10mlbDKAsM/edit)
 
 This MySQL database makes good use of "Triggers" to efficiently update transaction costs, fees, fines and repair costs automatically when the Hardware or Transactions tables are updated. The design of this Database conforms to all levels of normalization standards including Boyce-Codd Normal Form. Dates must be entered as a single Integer value with no whitespaces or special characters so that costs can be calculated by taking the difference of two date values. A modular arithemetic algorithm is used to convert the date values from Year, Month and Day input to an Int value representing the number of days passed since the beginning of a year.
 
