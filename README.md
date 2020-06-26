@@ -49,12 +49,12 @@ This MySQL database makes good use of "Triggers" to efficiently update transacti
 - `AGG unit_price most_expensive and avg_rental_rate`
 - `AGGfees_fines total_damageFines, total_lateFees`
 
-Join Operation Use Cases
--`JOIN Customer-transactions past due`
--`JOIN emp-repair-cust repairmanFixes`
--`JOIN Employee-Orders-Supplier whoBoughtSupply`
--`JOIN Employee-transactions whoMadeSales`
--`JOIN Hardware-Orders-Supplier itemsInSupplyOrder`
--`JOIN Hardware-transactions showItems`
--`JOIN Transactions-repair-Hardware hardware_in_repair`
+### Join Operation Use Cases
+- `JOIN Customer-transactions past due`
+- `JOIN emp-repair-cust repairmanFixes`
+- `JOIN Employee-Orders-Supplier whoBoughtSupply`
+- `JOIN Employee-transactions whoMadeSales`
+- `JOIN Hardware-Orders-Supplier itemsInSupplyOrder`
+- `JOIN Hardware-transactions showItems`
+- `JOIN Transactions-repair-Hardware hardware_in_repair`
 
